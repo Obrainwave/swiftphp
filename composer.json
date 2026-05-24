@@ -1,0 +1,19 @@
+{
+    "name": "swiftphp/framework",
+    "description": "The SwiftPHP Framework",
+    "type": "project",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Swiftphp\\Framework\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Akeem Salau",
+            "email": "akeem@swiftphp.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {}
+}
