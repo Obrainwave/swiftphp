@@ -144,7 +144,7 @@ bootstrap()        — auto-detects parent via getPcid(), auto-inherits
 ---
 
 
-## 2026-05-11 — Week 3
+## 2026-05-11 — Week 3, Day 1
 
 ### What I built today
 - Implemented full DI container core for SwiftPHP:
@@ -204,3 +204,156 @@ vs previous week:
 - https://wiki.swoole.com/
 - Swoole Coroutine documentation (context + lifecycle behavior)
 - Internal stress test: coroutine-scoped dependency isolation (200 concurrent coroutines)
+
+
+## 2026-05-18 — Week 4, Day 1
+
+### What I built today
+
+- Built `src/Http/Router/Router.php`: register routes with `get/post/put/patch/delete/options` methods.
+- Added support for route parameters: `/users/{id}` and type-constrained parameters like `/users/{id:int}`.
+- Implemented route groups with prefixing and shared middleware inheritance.
+- Built `src/Http/Middleware/Pipeline.php`: executes middleware stack using an iterative onion model.
+- Built `src/Http/Request/Request.php`: Swoole request wrapper with clean, unified accessors.
+- Built `src/Http/Response/Response.php`: static helpers `ok()`, `created()`, `notFound()`, `unprocessable()`, `stream()`.
+- Introduced `ResponsePayload` to replace raw arrays for stricter response contracts and cleaner dispatching.
+- Refactored middleware execution to avoid `array_reverse()` and reduce allocation overhead in hot paths.
+
+---
+
+### What worked
+
+- Route registration and matching system is stable and correctly handles both static and parameterized routes.
+- Type-constrained routing (`{id:int}`) correctly enforces integer casting and prevents invalid matches from reaching handlers.
+- Route grouping with prefix + middleware composition works and preserves hierarchical structure.
+- Middleware pipeline executes in correct order using an iterative stack builder (no `array_reverse`, no functional overhead).
+- Request wrapper cleanly abstracts Swoole internals and supports query, JSON, POST, headers, and unified input access.
+- Response layer cleanly separates payload creation (`ResponsePayload`) from execution (`send()`), improving type safety and clarity.
+- Coroutine context isolation correctly prevents cross-request state leakage under concurrent load.
+- Full request lifecycle (Request → Router → Middleware → Controller → Response) executes reliably under Swoole concurrency.
+- High-concurrency benchmarks show stable throughput (~18k req/sec on low-spec hardware) without crashes or memory corruption.
+
+---
+
+### What was improved today (architectural wins)
+
+- Replaced array-based response contracts with strongly typed `ResponsePayload`.
+- Replaced recursive middleware patterns with explicit iterative stack construction.
+- Introduced coroutine-scoped Request/Response lifecycle using Context isolation.
+- Improved route normalization to handle malformed or inconsistent URIs safely.
+- Strengthened exception handling to prevent silent coroutine failure and request hangs.
+- Ensured middleware merging behaves deterministically across global and route-scoped layers.
+
+---
+
+### What is now stable at kernel level
+
+- Routing engine (regex + parameter binding)
+- Middleware pipeline (onion execution model)
+- Request abstraction layer (Swoole-safe input normalization)
+- Response dispatch system (payload-driven output)
+- Dependency Injection container (singleton + scoped lifecycle)
+- Coroutine context isolation (request-safe execution model)
+- Application lifecycle (full request → response cycle under concurrency)
+
+---
+
+## 2026-05-20 — Week 4, Day 3
+
+### What I built today
+-	Wire everything together in the Application class.
+
+### Tests Performed Today
+
+#### 1. Basic Route Execution Test
+- Endpoint: `GET /ping`
+- Verified:
+  - Router matching works
+  - Request/Response lifecycle executes correctly
+  - Coroutine ID retrieval works
+- Result:
+  - Stable response returned (`pong`)
+  - No memory or runtime errors
+
+---
+
+#### 2. Route Parameter & Type Constraint Test
+- Endpoint: `GET /users/{id:int}`
+- Verified:
+  - Dynamic route matching
+  - Regex-based parameter extraction
+  - Type casting (`int` enforcement)
+- Result:
+  - `/users/55` → success (`user_id: 55`, type: integer)
+  - `/users/john` → correctly rejected (404 Route not found)
+
+---
+
+#### 3. Middleware Group Test
+- Endpoint: `GET /api/status`
+- Verified:
+  - Route group prefix handling (`/api`)
+  - Middleware injection into grouped routes
+  - Container-based middleware resolution
+- Result:
+  - Middleware executed successfully
+  - Response returned `middleware: true`
+  - No pipeline or DI failures
+
+---
+
+#### 4. High-Concurrency Load Test (wrk)
+
+##### Test A — Simple endpoint
+```bash
+wrk -t4 -c200 -d20s http://127.0.0.1:8080/ping
+```
+- ~13,000–15,000 req/sec observed
+- Stable latency under load
+- No crashes or coroutine leaks
+
+##### Test B — Parameterized route
+```bash
+wrk -t4 -c200 -d20s http://127.0.0.1:8080/users/123
+```
+- ~12,000–13,000 req/sec
+- Slight overhead due to regex + casting
+- Still stable under concurrency
+
+##### Test C — Heavy route group load
+```bash
+wrk -t8 -c500 -d20s http://127.0.0.1:8080/isolation/999
+```
+- ~8,000–15,000 req/sec (varied depending on workload state)
+- No memory corruption or request bleeding
+- 500 concurrent connections handled successfully
+- Only non-critical timeout noise under extreme load
+
+##### Test D — Benchmark payload stress test
+```bash
+wrk -t8 -c500 -d30s http://127.0.0.1:8080/benchmark/55
+```
+- ~18,000–19,000 req/sec peak throughput
+- ~71 MB/sec transfer rate
+- ~600,000+ requests processed
+- 1 timeout in entire run (statistically negligible)
+- Stable memory behavior under sustained load
+
+### Key Observations from Testing
+- Router performance is stable and not a bottleneck
+- Middleware pipeline executes correctly under concurrency
+- Coroutine context isolation is functioning correctly (no cross-request leakage)
+- Response system handles high throughput without crashes
+- Container resolution works correctly under load
+- System scales linearly within hardware limits (2-core CPU saturation observed)
+
+### Where SwiftPHP Stands as of Today
+✅ Swoole server — 44k+ req/s
+✅ Coroutine context isolation — 500/500 pass
+✅ DI Container — 200/200 scoped isolation pass
+✅ Router — groups, params, type constraints, middleware stack
+✅ Request — unified input(), all(), route params, JSON caching
+✅ Response — ResponsePayload, all static helpers, isWritable guard
+✅ Pipeline — manual onion build, MiddlewareInterface enforcement
+✅ Application — full request lifecycle wired end to end
+✅ ConfigureRuntime::boot() in Application::serve()

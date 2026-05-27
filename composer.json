@@ -5,7 +5,8 @@
     "license": "MIT",
     "autoload": {
         "psr-4": {
-            "Swiftphp\\Framework\\": "src/"
+            "Swiftphp\\Framework\\": "src/",
+            "Tests\\": "tests/"
         }
     },
     "authors": [
