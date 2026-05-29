@@ -7,12 +7,15 @@ services:
       MYSQL_ROOT_PASSWORD: secret
       MYSQL_DATABASE: swiftphp
     ports:
-      - "3305:3305"
+      - "3305:3306"
 
   redis:
     image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: secret
+      REDIS_DB: swiftphp
     ports:
-      - "6377:6377"
+      - "6377:6379"
 
   postgres:
     image: pgvector/pgvector:pg16

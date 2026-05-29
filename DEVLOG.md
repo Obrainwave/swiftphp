@@ -338,6 +338,7 @@ wrk -t8 -c500 -d30s http://127.0.0.1:8080/benchmark/55
 - ~600,000+ requests processed
 - 1 timeout in entire run (statistically negligible)
 - Stable memory behavior under sustained load
+- The benchmark route transferred 2.38GB in 30 seconds. That is 75MB/s sustained JSON serialisation throughput.
 
 ### Key Observations from Testing
 - Router performance is stable and not a bottleneck
@@ -357,3 +358,61 @@ wrk -t8 -c500 -d30s http://127.0.0.1:8080/benchmark/55
 ✅ Pipeline — manual onion build, MiddlewareInterface enforcement
 ✅ Application — full request lifecycle wired end to end
 ✅ ConfigureRuntime::boot() in Application::serve()
+
+---
+
+
+## 2026-05-25 — Week 5, Day 1
+
+### What I built today
+- Improved and stabilized ConnectionPool for coroutine-safe database handling
+- Implemented and refined DB façade with:
+- coroutine-scoped transaction binding
+- nested transactions via SAVEPOINT
+- post-commit hooks system
+- DDL guard against implicit transaction commits
+* **`MysqlPool` Integration**: Migrated the load-testing harness (`tests/performance/pool_stress_test.php`) to evaluate the specialized framework driver rather than a raw, generic connection pool.
+* **`RedisPool` Hardening**: Implemented rigid type-safe validation rules via `validateConfig()` executed immediately prior to normalization to protect the factory from corrupted array values.
+* **Stall Guardrails**: Injected open-gateway option proxies into the `RedisPool` factory, enforcing an explicit `Redis::OPT_READ_TIMEOUT` configuration to shield against infinite coroutine read stalls.
+
+### What worked
+- Pool correctly scales up to max capacity without leaks
+- No deadlocks observed under 1000 concurrent coroutines
+- Connection reuse behaves correctly under saturation
+- Coroutine context binding for transactions works reliably
+- Health checks successfully filter broken connections
+- Benchmark system produces stable QPS across multiple tiers
+* **Native Hooking**: Swoole's transparent stream splitting via `SWOOLE_HOOK_ALL` proved highly performant when multiplexing native `phpredis` extension instances, avoiding the deprecated custom coroutine components completely.
+* **Symmetric Architecture**: Replicating the configuration normalization flow across both `MysqlPool` and `RedisPool` kept the driver layer predictable and developer-friendly.
+
+### What did not work / surprises
+- Pool saturation behavior revealed that QPS increases even when latency increases significantly (not linear scaling)
+* **Inheritance Blockers**: Hit an immediate runtime crash when spinning up the script: `PHP Fatal error: Class Swiftphp\Framework\Database\Pool\MysqlPool cannot extend final class ConnectionPool`. 
+* **The OOP Paradox**: Caught myself backtracking on an old design trap. The base `ConnectionPool` had been strictly marked as `final` during a previous composition experiment, causing the new inheritance-based specialized pools to break.
+
+### Decision made
+- Standardized config normalization + validation BEFORE factory execution. Reason: fail-fast prevents runtime pool corruption
+* **Dropping `final` from the Base Pool**: Chose to strip the `final` constraint from `ConnectionPool` rather than writing complex composition proxy patterns for every single driver method (`acquire()`, `release()`, metric tracking counters). Inheritance keeps the framework core significantly cleaner and less boilerplate-heavy.
+* **Proactive Fail-Fast Validation**: Positioned the configuration validation step *before* array normalization to guarantee malformed configuration options (e.g., negative ports or string indices) throw clean `InvalidArgumentException` errors instead of masking bugs under silent default value falls.
+
+### Benchmark numbers (if applicable)
+Metric: QPS / Latency / Saturation behavior
+
+10 workers: ~1395 QPS / ~3–5ms latency / LOW saturation
+25 workers: ~985 QPS / ~20ms latency / MID saturation
+50 workers: ~1597 QPS / ~20ms latency / MAXED
+100 workers: ~1678 QPS / ~35ms latency / MAXED
+200 workers: ~1617 QPS / ~76ms latency / MAXED
+500 workers: ~3416 QPS / ~78ms latency / MAXED
+1000 workers: ~3676 QPS / ~159ms latency / MAXED
+
+Observation: Pool caps at 50 connections correctly; higher concurrency shifts pressure to queueing rather than scaling.
+
+---
+
+### Resources / references
+- https://www.swoole.co.uk/docs/get-started/coroutine
+- https://www.php.net/manual/en/book.pdo.php
+- https://dev.mysql.com/doc/
+- https://github.com/swoole/swoole-src
+- https://redis.io/docs/latest/
