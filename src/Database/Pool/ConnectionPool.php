@@ -29,6 +29,7 @@ class ConnectionPool
     private float $timeout;
     private int $allocatedCount = 0;
     private bool $closed = false;
+    private string $dialect;
 
     /**
      * @param callable(): TConnection $factory
@@ -39,7 +40,8 @@ class ConnectionPool
         int $min = 1,
         int $max = 10,
         float $timeout = 3.0,
-        ?callable $healthCheck = null
+        ?callable $healthCheck = null,
+        string $dialect = 'mysql'
     ) {
         if ($min < 0 || $max <= 0) {
             throw new RuntimeException('Pool size must be positive integers.');
@@ -54,11 +56,16 @@ class ConnectionPool
         $this->min = $min;
         $this->max = $max;
         $this->timeout = $timeout;
-
+        $this->dialect = $dialect;
         $this->channel = new Channel($max);
 
         // Pre-populate baseline capacity
         $this->warm($min);
+    }
+
+    public function getDialect(): string
+    {
+        return $this->dialect;
     }
 
     /**

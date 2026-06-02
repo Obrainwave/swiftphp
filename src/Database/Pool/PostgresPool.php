@@ -1,7 +1,5 @@
 <?php
-
 declare(strict_types=1);
-
 namespace Swiftphp\Framework\Database\Pool;
 
 use PDO;
@@ -10,17 +8,17 @@ use RuntimeException;
 use InvalidArgumentException;
 
 /**
- * Concrete MySQL connection pool for SwiftPHP.
+ * Concrete PostgreSQL connection pool for SwiftPHP.
  *
  * @extends ConnectionPool<PDO>
  */
-final class MysqlPool extends ConnectionPool
+final class PostgresPool extends ConnectionPool
 {
-    /** @var array<string, mixed> Normalized MySQL connection config */
+    /** @var array<string, mixed> Normalized PostgreSQL connection config */
     private array $config;
 
     /**
-     * @param array<string, mixed> $config MySQL connection parameters.
+     * @param array<string, mixed> $config PostgreSQL connection parameters.
      * @param int   $min     Minimum connections to keep warm.
      * @param int   $max     Maximum connections allowed in the pool.
      * @param float $timeout Seconds to wait when the pool is saturated.
@@ -36,28 +34,29 @@ final class MysqlPool extends ConnectionPool
 
         // Define how a fresh PDO instance is fabricated
         $factory = function (): PDO {
-            $dsn = sprintf(
-                'mysql:host=%s;port=%d;dbname=%s;charset=%s',
+            $dns = sprintf(
+                'pgsql:host=%s;port=%d;dbname=%s',
                 $this->config['host'],
                 $this->config['port'],
-                $this->config['database'],
-                $this->config['charset']
+                $this->config['database']
             );
 
-            // Merge sane defaults with user-defined driver choices
             $options = array_replace([
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
-                PDO::ATTR_STRINGIFY_FETCHES => false,
-                PDO::ATTR_TIMEOUT => (int) $this->config['timeout'],
+                PDO::ATTR_TIMEOUT => (int) $this->config['connect_timeout'],
             ], $this->config['options']);
-
             try {
-                return new PDO($dsn, $this->config['username'], $this->config['password'], $options);
+                return new PDO(
+                    $dns,
+                    $this->config['username'],
+                    $this->config['password'],
+                    $options
+                );
             } catch (PDOException $e) {
                 throw new RuntimeException(sprintf(
-                    'MySQL connection failed [%s@%s:%d/%s]: %s',
+                    'PostgreSQL connection failed [%s@%s:%d/%s]: %s',
                     $this->config['username'],
                     $this->config['host'],
                     $this->config['port'],
@@ -67,11 +66,9 @@ final class MysqlPool extends ConnectionPool
             }
         };
 
-        // Active I/O health check
-        $healthCheck = function (PDO $conn): bool {
+        $healthCheck = function (PDO $pdo): bool {
             try {
-                $conn->query('SELECT 1');
-                return true;
+                return $pdo->query('SELECT 1') !== false;
             } catch (PDOException) {
                 return false;
             }
@@ -83,7 +80,7 @@ final class MysqlPool extends ConnectionPool
             max: $max,
             timeout: $timeout,
             healthCheck: $healthCheck,
-            dialect: 'mysql'
+            dialect: 'pgsql'
         );
     }
 
@@ -92,7 +89,7 @@ final class MysqlPool extends ConnectionPool
         foreach (['host', 'database'] as $key) {
             if (empty($config[$key])) {
                 throw new InvalidArgumentException(
-                    "MySQL pool config requires a non-empty '{$key}' value."
+                    "PostgreSQL pool config requires a non-empty '{$key}' value."
                 );
             }
         }
@@ -102,7 +99,7 @@ final class MysqlPool extends ConnectionPool
             (!is_int($config['port']) || $config['port'] <= 0)
         ) {
             throw new InvalidArgumentException(
-                'MySQL pool config port must be a positive integer.'
+                'PostgreSQL pool config port must be a positive integer.'
             );
         }
     }
@@ -111,13 +108,11 @@ final class MysqlPool extends ConnectionPool
     {
         return array_merge([
             'host' => '127.0.0.1',
-            'port' => 3306,
-            'user' => 'root',
+            'port' => 5432,
+            'user' => 'postgres',
             'password' => '',
             'database' => '',
-            'charset' => 'utf8mb4',
-            'timeout' => 2,
-            'options' => [], // Sane open gateway for custom PDO parameters
+            'connect_timeout' => 2,
         ], $config);
     }
 }

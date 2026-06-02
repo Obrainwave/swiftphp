@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    bootstrap="tests/bootstrap.php"
+    colors="true"
+    stopOnFailure="false"
+>
+    <testsuites>
+        <testsuite name="SwiftPHP">
+            <directory>tests/Unit</directory>
+            <directory>tests/Feature</directory>
+            <directory>tests/AI</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>

@@ -11,6 +11,7 @@ use Swoole\Http\Request as SwooleRequest;
 use Swoole\Http\Response as SwooleResponse;
 use Swoole\Http\Server;
 use Swiftphp\Framework\Core\Bootstrap\ConfigureRuntime;
+use Swiftphp\Framework\Core\Support\Facade;
 use Swiftphp\Framework\Core\Container\Container;
 use Swiftphp\Framework\Core\Coroutine\Context;
 use Swiftphp\Framework\Http\Middleware\Pipeline;
@@ -18,6 +19,8 @@ use Swiftphp\Framework\Http\Request\Request;
 use Swiftphp\Framework\Http\Response\Response;
 use Swiftphp\Framework\Http\Response\ResponsePayload;
 use Swiftphp\Framework\Http\Router\Router;
+use Swiftphp\Framework\Database\DatabaseServiceProvider;
+use Swiftphp\Framework\Core\Config\Config;
 
 final class Application
 {
@@ -25,6 +28,8 @@ final class Application
     private Container $container;
     private ?Server $server = null;
     private array $middleware = [];
+    private array $providerClasses = [];
+    private array $providers = [];
 
     /**
      * Environment debug toggle to prevent information leakage in production.
@@ -39,21 +44,57 @@ final class Application
 
         $this->container->singleton(Container::class, fn() => $this->container);
         $this->container->singleton(self::class, fn() => $this);
-
         $this->container->scoped(
             Request::class,
             fn() => Context::get(Request::class)
         );
-
         $this->container->scoped(
             Response::class,
             fn() => Context::get(Response::class)
         );
+        $this->container->singleton(Config::class, function () {
+            $config = new Config();
+            $config->load($this->basePath . '/config');
+            return $config;
+        });
+
+        // Framework registers its own providers automatically
+        $this->registerFrameworkProviders();
     }
 
     public function middleware(string $middleware): void
     {
         $this->middleware[] = $middleware;
+    }
+
+    public function withProviders(array $providers): static
+    {
+        $this->providerClasses = array_merge($this->providerClasses, $providers);
+        return $this;
+    }
+
+    public function bootstrap(): static
+    {
+        ConfigureRuntime::boot();
+        Facade::setContainer($this->container);
+
+        // 1. Instantiate all providers once
+        foreach ($this->providerClasses as $providerClass) {
+            $provider = new $providerClass($this->container);
+            $this->providers[] = $provider;
+        }
+
+        // 2. Register phase
+        foreach ($this->providers as $provider) {
+            $provider->register();
+        }
+
+        // 3. Boot phase
+        foreach ($this->providers as $provider) {
+            $provider->boot();
+        }
+
+        return $this;
     }
 
     public function get(string $path, Closure|array $handler): void
@@ -96,7 +137,6 @@ final class Application
 
     public function serve(string $host = '0.0.0.0', int $port = 8080): void
     {
-        ConfigureRuntime::boot();
         $this->server = new Server($host, $port);
 
         $this->server->set([
@@ -172,6 +212,11 @@ final class Application
         $this->server->start();
     }
 
+    public function container(): Container
+    {
+        return $this->container;
+    }
+
     private function runHandler(Closure|array $handler, Request $request): mixed
     {
         if ($handler instanceof Closure) {
@@ -188,5 +233,18 @@ final class Application
         }
 
         return $controller->{$method}($request);
+    }
+
+    private function registerFrameworkProviders(): void
+    {
+        $providers = [
+            DatabaseServiceProvider::class,
+            // Future: RedisServiceProvider::class, CacheServiceProvider::class, AIServiceProvider::class...
+        ];
+        foreach ($providers as $provider) {
+            $providerInstance = new $provider($this->container);
+            $providerInstance->register();
+            $providerInstance->boot();
+        }
     }
 }

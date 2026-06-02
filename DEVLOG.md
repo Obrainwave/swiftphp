@@ -416,3 +416,36 @@ Observation: Pool caps at 50 connections correctly; higher concurrency shifts pr
 - https://dev.mysql.com/doc/
 - https://github.com/swoole/swoole-src
 - https://redis.io/docs/latest/
+
+---
+
+## 2026-06-02 — Week 6, Day 2
+ 
+### What I built today
+* `Swiftphp\Framework\Database\QueryBuilder\Grammar`: Universal SQL grammar compilation layer for MySQL and PostgreSQL driven by an extensible method-dispatch layout.
+* `tests/database/named_connections_test.php`: High-concurrency async benchmarking harness to evaluate named pool routing behavior inside Swoole.
+ 
+### What worked
+* Zero Context Contamination: The Swoole connection registry maintained complete container isolation across concurrent execution rings. 1,000 parallel coroutines executed transactional pairs flawlessly with exactly 0 errors.
+* Granular Query Breakdown: The lookup map approach successfully decoupled the parser from monolithic structural loops, delegating sub-AST evaluation strictly to dedicated, isolated where-clause methods.
+ 
+### What did not work /
+surprises
+* Modern MySQL Upsert Warning Trap: Discovered that the traditional `VALUES(col)` macro inside `ON DUPLICATE KEY UPDATE` strings is completely deprecated in modern MySQL 8.0.20+ setups, causing syntax blocks to trigger errors.
+* PostgreSQL Strict Identifier Quoting: Double-quoting table and field names inside Postgres triggers a rigid case-sensitive string match requirement. This breaks interoperability with default implicit lowercased database schemas when input strings use mixed-case text.
+ 
+### Decision made
+* Implicit Driver-Side Case Folding: Added a `$foldIdentifierCase` property to the compiler constructor that defaults to `true`. When generating PostgreSQL strings, token segments automatically run through `strtolower()` prior to quote wrapping to ensure driver-agnostic portability.
+* Immutability of the Binding Sequence: Codified a mandatory `BINDING ORDER CONTRACT` into the framework architecture. The upstream query builder engine is bound to merge and flatten its local state variables in a fixed chronology: `Join -> Where -> Having -> Order` to completely neutralize structural parameters shifting out of alignment.
+ 
+### Benchmark numbers
+Metric:       1,251.5 queries/sec (1,000 Coroutines, Transactional P95: 2,199.15ms, Analytics P95: 95.04ms)
+vs last week: [Baseline established for modern multi-pool architecture]
+ 
+### Tomorrow
+* Construct the main fluent query `Builder` engine to assemble and manage individual clause states, and safely flatten parameter sequences according to the Grammar’s structural contract.
+ 
+### Resources / references
+* MySQL Reference Manual: Section 15.2.7.2 - INSERT ... ON DUPLICATE KEY UPDATE Row Aliasing Syntax
+* PostgreSQL Documentation: Chapter 4.1.1 - SQL Identifiers and Case-Folding Rules
+* Swoole Extension Manual: Advanced Connection Pools & Concurrent Database Routine Management

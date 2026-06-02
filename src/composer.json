@@ -8,7 +8,10 @@
             "App\\": "app/",
             "Swiftphp\\Framework\\": "src/",
             "Tests\\": "tests/"
-        }
+        },
+        "files": [
+            "src/Core/Helper/helpers.php"
+        ]
     },
     "authors": [
         {

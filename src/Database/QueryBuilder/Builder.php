@@ -31,23 +31,39 @@ class Builder
     public const TRANSACTION_CONTEXT_KEY = '__swiftphp_active_transaction_connection__';
 
     private ConnectionPool $pool;
-    private string|Expression $table = '';
+    private string $connectionName;
+    private string|Expression|\Closure|self $table = '';
+    private ?string $tableAlias = null; // Track subquery table aliases
+    
     /** @var array<int, string|Expression> */
     private array $columns = ['*'];
     private array $wheres = [];
+    
+    /** @var array<int, array{type: string, table: string|Expression, first: string|Expression, operator: string, second: string|Expression}> */
+    private array $joins = []; // Track applied table joins
+    
     private array $orders = [];
     private ?int $limitValue = null;
     private ?int $offsetValue = null;
+    private Grammar $grammar;
 
-    public function __construct(ConnectionPool $pool)
+    public function __construct(ConnectionPool $pool, string $connectionName = 'default')
     {
         $this->pool = $pool;
+        $this->connectionName = $connectionName;
+        $this->grammar = new Grammar($pool->getDialect());
     }
 
-    public function table(string|Expression $table): static
+    /**
+     * Supports string tables, Expression, Closure subqueries, or nested Builder instances.
+     */
+    public function table(string|Expression|\Closure|self $table, ?string $alias = null): static
     {
         $clone = clone $this;
         $clone->table = $table;
+        if ($alias !== null) {
+            $clone->tableAlias = $alias;
+        }
         return $clone;
     }
 
@@ -68,9 +84,12 @@ class Builder
         return $this->addWhere($column, $operator, $value, 'OR');
     }
 
-    public function whereIn(string|Expression $column, array $values): static
+    /**
+     * Accepting arrays, Closures, or nested Builder instances for subquery targeting.
+     */
+    public function whereIn(string|Expression $column, array|\Closure|self $values): static
     {
-        if (empty($values)) {
+        if (is_array($values) && empty($values)) {
             throw new InvalidArgumentException('whereIn() requires a non-empty values array.');
         }
 
@@ -78,7 +97,7 @@ class Builder
         $clone->wheres[] = [
             'type' => 'in',
             'column' => $column,
-            'values' => array_values($values),
+            'values' => is_array($values) ? array_values($values) : $values,
             'boolean' => 'AND',
         ];
 
@@ -97,6 +116,32 @@ class Builder
         $clone = clone $this;
         $clone->wheres[] = ['type' => 'notNull', 'column' => $column, 'boolean' => 'AND'];
         return $clone;
+    }
+
+    /**
+     * NEW: Add custom INNER JOIN layer
+     */
+    public function join(string|Expression $table, string|Expression $first, string $operator, string|Expression $second, string $type = 'INNER'): static
+    {
+        $clone = clone $this;
+        $clone->joins[] = [
+            'type' => strtoupper($type),
+            'table' => $table,
+            'first' => $first,
+            'operator' => $operator,
+            'second' => $second,
+        ];
+        return $clone;
+    }
+
+    public function leftJoin(string|Expression $table, string|Expression $first, string $operator, string|Expression $second): static
+    {
+        return $this->join($table, $first, $operator, $second, 'LEFT');
+    }
+
+    public function rightJoin(string|Expression $table, string|Expression $first, string $operator, string|Expression $second): static
+    {
+        return $this->join($table, $first, $operator, $second, 'RIGHT');
     }
 
     public function orderBy(string|Expression $column, string $direction = 'ASC'): static
@@ -163,8 +208,32 @@ class Builder
 
     public function count(string|Expression $column = '*'): int
     {
+        return (int) ($this->aggregate('COUNT', $column) ?? 0);
+    }
+
+    public function sum(string|Expression $column): mixed
+    {
+        $result = $this->aggregate('SUM', $column);
+        return $result !== null ? (str_contains((string) $result, '.') ? (float) $result : (int) $result) : null;
+    }
+
+    public function max(string|Expression $column): mixed
+    {
+        return $this->aggregate('MAX', $column);
+    }
+
+    public function min(string|Expression $column): mixed
+    {
+        return $this->aggregate('MIN', $column);
+    }
+
+    /**
+     * Generic engine abstraction layer driving aggregate operations uniformly
+     */
+    private function aggregate(string $function, string|Expression $column): mixed
+    {
         $target = $this->quoteIdentifier($column);
-        $expression = new Expression("COUNT({$target}) AS __swiftphp_aggregate__");
+        $expression = new Expression("{$function}({$target}) AS __swiftphp_aggregate__");
 
         $clone = $this->select($expression);
         $clone->orders = [];
@@ -172,7 +241,7 @@ class Builder
         $clone->offsetValue = null;
 
         $row = $clone->first();
-        return $row ? (int) $row['__swiftphp_aggregate__'] : 0;
+        return $row ? $row['__swiftphp_aggregate__'] : null;
     }
 
     public function insert(array $data): int
@@ -291,8 +360,12 @@ class Builder
         $cid = Coroutine::getCid();
         if ($cid > 0) {
             $context = Coroutine::getContext($cid);
-            if ($context && isset($context[self::TRANSACTION_CONTEXT_KEY])) {
-                return $work($context[self::TRANSACTION_CONTEXT_KEY]);
+            
+            // [UPDATED] Match the exact dynamic key pattern generated by the DBManager
+            $txKey = self::TRANSACTION_CONTEXT_KEY . "_{$this->connectionName}";
+            
+            if ($context && isset($context[$txKey])) {
+                return $work($context[$txKey]);
             }
         }
 
@@ -304,15 +377,36 @@ class Builder
         }
     }
 
+    /**
+     * Orchestrates table subqueries, join definitions, and custom criteria.
+     */
     private function compileSelect(): array
     {
         $this->guardTable();
         $bindings = [];
+        
+        // Evaluate base tables / subquery states dynamically
+        $tableSql = $this->compileTable($bindings);
+
         $columnsSql = (count($this->columns) === 1 && $this->columns[0] === '*')
             ? '*'
             : implode(', ', array_map([$this, 'quoteIdentifier'], $this->columns));
 
-        $sql = sprintf('SELECT %s FROM %s', $columnsSql, $this->quoteIdentifier($this->table));
+        $sql = sprintf('SELECT %s FROM %s', $columnsSql, $tableSql);
+
+        // Compile Applied Table Joins
+        if (!empty($this->joins)) {
+            foreach ($this->joins as $join) {
+                $sql .= sprintf(
+                    ' %s JOIN %s ON %s %s %s',
+                    $join['type'],
+                    $this->quoteIdentifier($join['table']),
+                    $this->quoteIdentifier($join['first']),
+                    $join['operator'],
+                    $this->quoteIdentifier($join['second'])
+                );
+            }
+        }
 
         [$whereSql, $whereBindings] = $this->compileWheres();
         if ($whereSql !== '') {
@@ -341,6 +435,35 @@ class Builder
         return [$sql, $bindings];
     }
 
+    /**
+     * Processes subquery table targets safely and appends structural parameters.
+     */
+    private function compileTable(array &$bindings): string
+    {
+        if ($this->table instanceof \Closure || $this->table instanceof self) {
+            $subQuery = $this->table;
+            if ($subQuery instanceof \Closure) {
+                $subQuery = new self($this->pool);
+                ($this->table)($subQuery);
+            }
+
+            [$sql, $subBindings] = $subQuery->compileSelect();
+            array_push($bindings, ...$subBindings);
+            
+            $alias = $this->tableAlias ?? 'sub__';
+            return "({$sql}) AS " . $this->quoteIdentifier($alias);
+        }
+
+        $tableStr = $this->quoteIdentifier($this->table);
+        if ($this->tableAlias !== null) {
+            $tableStr .= ' AS ' . $this->quoteIdentifier($this->tableAlias);
+        }
+        return $tableStr;
+    }
+
+    /**
+     * Recursively extracts parameters from nested query conditions.
+     */
     private function compileWheres(): array
     {
         if (empty($this->wheres)) {
@@ -352,23 +475,62 @@ class Builder
 
         foreach ($this->wheres as $i => $w) {
             $isExpressionValue = isset($w['value']) && $w['value'] instanceof Expression;
+            
+            // Identify recursive basic or IN constraints
+            $isSubQueryValue = isset($w['value']) && ($w['value'] instanceof \Closure || $w['value'] instanceof self);
+            $isSubQueryIn = isset($w['values']) && ($w['values'] instanceof \Closure || $w['values'] instanceof self);
 
-            $clause = match ($w['type']) {
-                'basic' => $isExpressionValue
-                ? $this->quoteIdentifier($w['column']) . ' ' . $w['operator'] . ' ' . $w['value']->getValue()
-                : $this->quoteIdentifier($w['column']) . ' ' . $w['operator'] . ' ?',
-                'in' => $this->quoteIdentifier($w['column'])
-                . ' IN (' . implode(', ', array_fill(0, count($w['values']), '?')) . ')',
-                'null' => $this->quoteIdentifier($w['column']) . ' IS NULL',
-                'notNull' => $this->quoteIdentifier($w['column']) . ' IS NOT NULL',
-                default => throw new RuntimeException("Unknown where type: {$w['type']}"),
-            };
+            $clause = '';
+            if ($w['type'] === 'basic') {
+                if ($isExpressionValue) {
+                    $clause = $this->quoteIdentifier($w['column']) . ' ' . $w['operator'] . ' ' . $w['value']->getValue();
+                } elseif ($isSubQueryValue) {
+                    $subQuery = $w['value'];
+                    if ($subQuery instanceof \Closure) {
+                        $subQuery = new self($this->pool);
+                        ($w['value'])($subQuery);
+                    }
+                    [$subSql, $subBindings] = $subQuery->compileSelect();
+                    $clause = $this->quoteIdentifier($w['column']) . ' ' . $w['operator'] . ' (' . $subSql . ')';
+                    $w['subBindings'] = $subBindings;
+                } else {
+                    $clause = $this->quoteIdentifier($w['column']) . ' ' . $w['operator'] . ' ?';
+                }
+            } elseif ($w['type'] === 'in') {
+                if ($isSubQueryIn) {
+                    $subQuery = $w['values'];
+                    if ($subQuery instanceof \Closure) {
+                        $subQuery = new self($this->pool);
+                        ($w['values'])($subQuery);
+                    }
+                    [$subSql, $subBindings] = $subQuery->compileSelect();
+                    $clause = $this->quoteIdentifier($w['column']) . ' IN (' . $subSql . ')';
+                    $w['subBindings'] = $subBindings;
+                } else {
+                    $clause = $this->quoteIdentifier($w['column']) . ' IN (' . implode(', ', array_fill(0, count($w['values']), '?')) . ')';
+                }
+            } else {
+                $clause = match ($w['type']) {
+                    'null' => $this->quoteIdentifier($w['column']) . ' IS NULL',
+                    'notNull' => $this->quoteIdentifier($w['column']) . ' IS NOT NULL',
+                    default => throw new RuntimeException("Unknown where type: {$w['type']}"),
+                };
+            }
 
-            match ($w['type']) {
-                'basic' => $isExpressionValue ? null : $bindings[] = $w['value'],
-                'in' => array_push($bindings, ...$w['values']),
-                default => null,
-            };
+            // Sequentially merge execution scopes
+            if ($w['type'] === 'basic') {
+                if ($isSubQueryValue) {
+                    array_push($bindings, ...$w['subBindings']);
+                } elseif (!$isExpressionValue) {
+                    $bindings[] = $w['value'];
+                }
+            } elseif ($w['type'] === 'in') {
+                if ($isSubQueryIn) {
+                    array_push($bindings, ...$w['subBindings']);
+                } else {
+                    array_push($bindings, ...$w['values']);
+                }
+            }
 
             $fragments[] = ($i === 0) ? $clause : ($w['boolean'] . ' ' . $clause);
         }
@@ -454,8 +616,14 @@ class Builder
         return '`' . str_replace('`', '``', $identifier) . '`';
     }
 
+    /**
+     * Bypass plain string check verification when closures/builders run as subqueries
+     */
     private function guardTable(): void
     {
+        if ($this->table instanceof \Closure || $this->table instanceof self) {
+            return;
+        }
         $tableStr = $this->table instanceof Expression ? $this->table->getValue() : $this->table;
         if ($tableStr === '') {
             throw new RuntimeException('No table specified. Call table() before executing a query.');
