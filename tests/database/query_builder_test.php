@@ -5,7 +5,6 @@ declare(strict_types=1);
 require __DIR__ . '/../../vendor/autoload.php';
 
 use Swoole\Runtime;
-use Swoole\Coroutine;
 use Swoole\Coroutine\WaitGroup;
 
 use Swiftphp\Framework\Database\DB;
@@ -30,8 +29,7 @@ $config = [
     'password' => 'secret',
 ];
 
-Coroutine\run(function () use ($config) {
-
+run(function () use ($config) {
     $poolMax = 50;
 
     $pool = new MysqlPool(

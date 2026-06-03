@@ -5,7 +5,7 @@ return [
 
     'connections' => [
         'mysql' => [
-            'driver' => 'mysql',
+            'driver' => env('DB_CONNECTION', 'mysql'),
             'host' => env('DB_HOST', '127.0.0.1'),
             'port' => (int) env('DB_PORT', 3306),
             'database' => env('DB_DATABASE', ''),
@@ -19,17 +19,17 @@ return [
             ],
         ],
         'analytics' => [
-            'driver' => 'mysql',
-            'host' => env('DB_ANALYTICS_HOST', env('DB_HOST', '127.0.0.1')),
-            'port' => (int) env('DB_ANALYTICS_PORT', env('DB_PORT', 3306)),
-            'database' => env('DB_ANALYTICS_DATABASE', env('DB_DATABASE', 'swiftphp')), // Or a separate DB if you prefer
-            'username' => env('DB_ANALYTICS_USERNAME', env('DB_USERNAME', 'root')),
-            'password' => env('DB_ANALYTICS_PASSWORD', env('DB_PASSWORD', '')),
+            'driver' => env('ANALYTICS_DB_CONNECTION', 'pgsql'),
+            'host' => env('ANALYTICS_DB_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => (int) env('ANALYTICS_DB_PORT', env('DB_PORT', 5430)),
+            'database' => env('ANALYTICS_DB_DATABASE', env('DB_DATABASE', 'swiftphp')),
+            'username' => env('ANALYTICS_DB_USERNAME', env('DB_USERNAME', 'postgres')),
+            'password' => env('ANALYTICS_DB_PASSWORD', env('DB_PASSWORD', '')),
             'charset' => 'utf8mb4',
             'pool' => [
-                'min' => (int) env('DB_POOL_MIN', 5),
-                'max' => (int) env('DB_POOL_MAX', 50),
-                'timeout' => (float) env('DB_POOL_TIMEOUT', 3.0),
+                'min' => (int) env('ANALYTICS_DB_POOL_MIN', 5),
+                'max' => (int) env('ANALYTICS_DB_POOL_MAX', 50),
+                'timeout' => (float) env('ANALYTICS_DB_POOL_TIMEOUT', 3.0),
             ],
         ],
     ],

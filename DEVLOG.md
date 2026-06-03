@@ -449,3 +449,101 @@ vs last week: [Baseline established for modern multi-pool architecture]
 * MySQL Reference Manual: Section 15.2.7.2 - INSERT ... ON DUPLICATE KEY UPDATE Row Aliasing Syntax
 * PostgreSQL Documentation: Chapter 4.1.1 - SQL Identifiers and Case-Folding Rules
 * Swoole Extension Manual: Advanced Connection Pools & Concurrent Database Routine Management
+
+---
+
+## 2026-06-03 — Week 1, Day 3
+
+---
+
+### What I built today
+
+- Enhanced and stabilized the SwiftPHP coroutine-based database system  
+- Fixed multiple critical issues in `QueryException` (PDOException inheritance constraints, property type mismatch, SQLSTATE handling)  
+- Refined and validated multi-pool connection architecture (default vs analytics pool)  
+- Debugged PostgreSQL and MySQL DDL compatibility issues (AUTO_INCREMENT vs IDENTITY)  
+- Improved schema builder behavior for dialect-aware index generation  
+- Ran full 1000-coroutine concurrency benchmark under mixed transactional + stateless workloads  
+- Tuned connection pool sizing parameters for production-level concurrency stability  
+
+---
+
+### What worked
+
+- Connection pool scaling successfully eliminated:
+  - pool exhaustion timeout errors  
+  - coroutine starvation warnings  
+- Coroutine execution remained stable at 1000 concurrent tasks  
+- Transaction + analytics split execution worked correctly per coroutine  
+- Zero context violations after pool tuning  
+- DB abstraction layer correctly handled dual MySQL + PostgreSQL setups  
+- Benchmark harness executed fully without deadlocks or crashes  
+- Analytics connection isolation worked correctly and consistently  
+
+---
+
+### What did not work / surprises
+
+- Initial connection pool size caused severe saturation and timeouts under concurrency load  
+- PostgreSQL rejected MySQL-style `AUTO_INCREMENT`, requiring dialect-aware schema generation  
+- Transaction-heavy workload created unexpected latency amplification compared to stateless queries  
+- Default pool appeared “slower” due to transaction scope holding connections longer (not actual pool inefficiency)  
+- `QueryException` initially failed due to incorrect extension of `PDOException` internals (type + access level constraints)  
+- Misleading assumption: pool performance differences were actually workload shape differences, not engine speed differences  
+
+---
+
+### Decision made
+
+- Schema generation MUST be dialect-aware at compile time (MySQL vs PostgreSQL cannot share raw DDL templates)  
+- Index creation must be split into:
+  - inline table indexes (MySQL)
+  - post-table execution statements (PostgreSQL)  
+- Blueprint API MUST return `ColumnDefinition` instead of chaining on `Blueprint` to support fluent mutation design  
+- QueryException will remain PDOException-based but with strict control of SQLSTATE handling and separation of internal error metadata  
+- Connection pool saturation is treated as a **workload design issue**, not a pure scaling failure  
+
+---
+
+### Benchmark numbers
+- Concurrency Total: 1000 coroutines
+- Total Time Elapsed: 3.3303 sec
+- Aggregate Throughput: 900.82 queries/sec
+- Context Violations / Errors: 0 
+- Default Pool Latencies (Transactional Pair): Avg 2056.42 ms / P95 3190.94 ms
+- Analytics Pool Latencies (Postgres Switch): Avg 271.32 ms / P95 271.32 ms
+- Verification Success Rate: 100% (1000 / 1000 rows verified)
+- vs last run: Saved the test suite from a 100% crash loop (243 timeout errors and 1000 syntax errors dropped to a clean 0).
+
+---
+
+### Tomorrow
+
+- Implement `Migrator.php`:
+  - migration discovery via timestamp ordering  
+  - migration state tracking table (`migrations`)  
+  - safe up/down execution pipeline  
+
+- Implement `MigrationLock.php`:
+  - DB-level advisory lock  
+  - prevent concurrent migration execution across coroutine workers  
+
+- Add migration transaction safety layer (rollback on partial failure)  
+
+---
+
+### Resources / references
+
+- Swoole Coroutine documentation  
+  https://www.swoole.co.uk/docs/modules/swoole-coroutine  
+
+- PostgreSQL DDL constraints (CREATE INDEX rules)  
+  https://www.postgresql.org/docs/current/sql-createindex.html  
+
+- MySQL AUTO_INCREMENT vs PostgreSQL IDENTITY differences  
+  https://dev.mysql.com/doc/  
+
+- PDOException behavior and errorInfo structure  
+  https://www.php.net/manual/en/class.pdoexception.php  
+
+- ACID transaction behavior under concurrency (theory + implementation notes)

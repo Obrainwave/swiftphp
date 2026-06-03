@@ -10,7 +10,7 @@ use Swiftphp\Framework\Database\DB;
 
 echo config('database.connections.mysql.host') . " - Database Static Test\n";
 
-Coroutine\run(function () {
+run(function () {
 
     echo "====================================================\n";
     echo "SWIFTPHP ASYNC QUERY BUILDER BENCHMARK (CLEAN FIX)\n";

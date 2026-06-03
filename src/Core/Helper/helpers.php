@@ -30,3 +30,10 @@ if (! function_exists('config')) {
         return $config->get($key, $default);
     }
 }
+
+if (!function_exists('run')) {
+    function run(callable $callback): void
+    {
+        \Swoole\Coroutine\run($callback);
+    }
+}

@@ -46,7 +46,7 @@ final class PostgresPool extends ConnectionPool
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
                 PDO::ATTR_TIMEOUT => (int) $this->config['connect_timeout'],
-            ], $this->config['options']);
+            ], $this->config['pool']);
             try {
                 return new PDO(
                     $dns,

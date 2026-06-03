@@ -6,13 +6,14 @@ namespace Swiftphp\Framework\Database;
 
 use Swiftphp\Framework\Database\Pool\ConnectionPool;
 use Swiftphp\Framework\Database\QueryBuilder\Builder;
+use Swiftphp\Framework\Database\Exceptions\QueryException;
 use Swoole\Coroutine;
 use PDO;
 use PDOException;
 use PDOStatement;
 use Closure;
 use RuntimeException;
-use InvalidArgumentException; // [NEW] Added for configuration exception handling
+use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -34,7 +35,7 @@ final class DBManager
 
     // [UPDATED] Kept active pool reference but added array for named pool management
     private ConnectionPool $pool;
-    
+
     /** @var array<string, ConnectionPool> */
     private array $pools = []; // [NEW]
 
@@ -92,7 +93,7 @@ final class DBManager
         $this->pools[$name] = $pool;
     }
 
-    // [NEW] Helper methods for connection-aware coroutine context keys to prevent cross-connection transaction leakage.
+    // Helper methods for connection-aware coroutine context keys to prevent cross-connection transaction leakage.
     private function getTxContextKey(): string
     {
         return Builder::TRANSACTION_CONTEXT_KEY . "_{$this->connectionName}";
@@ -120,8 +121,8 @@ final class DBManager
         $cid = Coroutine::getCid();
         if ($cid > 0) {
             $context = Coroutine::getContext($cid);
-            $txKey = $this->getTxContextKey(); // [UPDATED] Uses dynamic key
-            
+            $txKey = $this->getTxContextKey();
+
             if (isset($context[$txKey])) {
                 return $this->executeRawStatement($context[$txKey], $sql, $bindings);
             }
@@ -178,7 +179,7 @@ final class DBManager
 
         $context = Coroutine::getContext($cid);
         $txKey = $this->getTxContextKey(); // [UPDATED] Uses dynamic key
-        
+
         if (!isset($context[$txKey])) {
             $hook();
             return;
@@ -273,7 +274,7 @@ final class DBManager
     {
         $txKey = $this->getTxContextKey();
         $depthKey = $this->getTxDepthKey();
-        
+
         // [UPDATED] Use dynamic keys
         $conn = $context[$txKey];
         $savepoint = "swiftphp_sp_{$depth}";
@@ -352,7 +353,14 @@ final class DBManager
             $stmt->execute();
             return $stmt;
         } catch (PDOException $e) {
-            throw new QueryException($sql, $bindings, $e);
+            throw new QueryException(
+                message: $e->getMessage(),
+                sql: $sql,
+                bindings: $bindings,
+                errorInfo: $e->errorInfo ?? [],
+                previous: $e,
+                connection: 'default'
+            );
         }
     }
 }
